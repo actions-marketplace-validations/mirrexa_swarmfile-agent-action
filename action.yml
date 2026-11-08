@@ -1,0 +1,189 @@
+name: Swarmfile agent workspace
+description: Run an agent in a Swarmfile workspace; publish the promoted branch from a separate, token-scoped job.
+author: Swarmfile
+
+branding:
+  icon: box
+  color: blue
+
+inputs:
+  mode:
+    description: "`agent` (mount + run + promote, no repository write token) or `publish` (fetch + push + PR)."
+    required: false
+    default: agent
+  org:
+    description: Swarmfile organization id.
+    required: true
+  repository:
+    description: Swarmfile repository id (from `swarmfile repository list --json`).
+    required: true
+  api-key:
+    description: Repository-scoped Swarmfile API key (`sf_key_…`). Use a secret.
+    required: true
+  hub-url:
+    description: Hub or community-server URL.
+    required: false
+    default: https://hub.swarmfile.com
+  git-insecure-hosts:
+    description: Comma-separated plain-HTTP hosts accepted by git-remote-swarmfile (loopback needs none).
+    required: false
+    default: ""
+  label:
+    description: Label for the workspace branch and the published branch.
+    required: false
+    default: agent
+  ttl-days:
+    description: Workspace lifetime before the archive sweep; empty uses .swarmfile/agents.yml (then 1).
+    required: false
+    default: ""
+  base-branch:
+    description: Branch the workspace forks from and the PR targets.
+    required: false
+    default: main
+  command:
+    description: Shell command to run in the agent container. `SWARMFILE_PROMPT` and `SWARMFILE_ISSUE_NUMBER` are exported.
+    required: false
+    default: ""
+  prompt:
+    description: Prompt text exported to the command as `SWARMFILE_PROMPT`.
+    required: false
+    default: ""
+  container-image:
+    description: Image for the agent container. Empty uses .swarmfile/agents.yml (then node:24-bookworm).
+    required: false
+    default: ""
+  setup-command:
+    description: Optional command run inside the agent container before `command`.
+    required: false
+    default: ""
+  agent-env:
+    description: Comma-separated environment variable names passed from the job to the agent container (for harness keys).
+    required: false
+    default: ANTHROPIC_API_KEY,OPENAI_API_KEY
+  run-on-host:
+    description: Run the agent command on the runner instead of a container. Only for runners where Docker cannot bind the FUSE workspace; this bypasses container isolation.
+    required: false
+    default: "false"
+  local-check-command:
+    description: Agent mode only. Command run after the harness when .swarmfile/agents.yml sets local_checks true.
+    required: false
+    default: ""
+  manual-push:
+    description: Publish mode only. Set true to publish when .swarmfile/agents.yml sets upstream_push to manual.
+    required: false
+    default: "false"
+  branch:
+    description: Publish mode only. The agent job's `branch` output; prefer it over re-deriving the name from this job's policy view.
+    required: false
+    default: ""
+  open-pr:
+    description: Open a pull request for the promoted branch (publish mode).
+    required: false
+    default: "false"
+  pr-base:
+    description: Base branch for the pull request (defaults to `base-branch`).
+    required: false
+    default: ""
+  pr-title:
+    description: Pull request title.
+    required: false
+    default: Agent changes
+  pr-body:
+    description: Pull request body. `Closes #<issue-number>` is appended when set.
+    required: false
+    default: ""
+  issue-number:
+    description: Numeric issue number to close from the pull request body.
+    required: false
+    default: ""
+  github-token:
+    description: Repository-write token for publish mode. Required to be the built-in GitHub token (`github.token`); a PAT is refused because GitHub would run workflows from the agent branch with that PAT's secrets. Never pass it to the agent job.
+    required: false
+    default: ""
+  expected-head:
+    description: Publish mode only. The canonical Swarmfile commit returned by the agent job's `head` output; required when the branch has commits, and the fetched head's Swarmfile-Commit trailer must match it.
+    required: false
+    default: ""
+  allow-workflow-changes:
+    description: Publish mode only. Allow the agent branch to change .github/workflows or .github/actions (default false).
+    required: false
+    default: "false"
+  provenance:
+    description: "Publish mode only. Fetch the hub-signed manifest, post a `swarmfile/agent` check run and commit status, and comment provenance/checkpoints on a PR. The token needs `checks: write`, `statuses: write` and `pull-requests: write`."
+    required: false
+    default: "true"
+  update-manifest:
+    description: Update-channel manifest that names the Linux .deb.
+    required: false
+    default: https://updates.swarmfile.com/stable/latest.json
+  deb-url:
+    description: Override the Linux .deb URL (skips the manifest; requires deb-sha256 or a SHA256SUMS beside it).
+    required: false
+    default: ""
+  deb-sha256:
+    description: SHA-256 of the .deb. Setting this or deb-url always ignores a preinstalled toolchain.
+    required: false
+    default: ""
+  install-deps:
+    description: Install FUSE/runtime packages with apt in agent mode (set false on a pre-provisioned runner).
+    required: false
+    default: "true"
+
+outputs:
+  branch:
+    description: The promoted branch name.
+    value: ${{ steps.run.outputs.branch }}
+  head:
+    description: The promoted branch's canonical Swarmfile commit hash (agent mode); publish verifies the fetched head's Swarmfile-Commit trailer.
+    value: ${{ steps.run.outputs.head }}
+  changed:
+    description: "`true` when the publish job pushed at least one commit."
+    value: ${{ steps.run.outputs.changed }}
+  pr-url:
+    description: The pull request URL when one was opened.
+    value: ${{ steps.run.outputs.pr-url }}
+
+runs:
+  using: composite
+  steps:
+    - id: install
+      shell: bash
+      env:
+        SWARMFILE_MODE: ${{ inputs.mode }}
+        SWARMFILE_UPDATE_MANIFEST: ${{ inputs.update-manifest }}
+        SWARMFILE_DEB_URL: ${{ inputs.deb-url }}
+        SWARMFILE_DEB_SHA256: ${{ inputs.deb-sha256 }}
+        SWARMFILE_INSTALL_DEPS: ${{ inputs.install-deps }}
+      run: "bash \"${{ github.action_path }}/scripts/install.sh\""
+
+    - id: run
+      shell: bash
+      env:
+        SWARMFILE_MODE: ${{ inputs.mode }}
+        SWARMFILE_ORG_ID: ${{ inputs.org }}
+        SWARMFILE_REPOSITORY_ID: ${{ inputs.repository }}
+        SWARMFILE_API_KEY: ${{ inputs.api-key }}
+        SWARMFILE_HUB_URL: ${{ inputs.hub-url }}
+        SWARMFILE_GIT_INSECURE_HOSTS: ${{ inputs.git-insecure-hosts }}
+        SWARMFILE_LABEL: ${{ inputs.label }}
+        SWARMFILE_TTL_DAYS: ${{ inputs.ttl-days }}
+        SWARMFILE_BASE_BRANCH: ${{ inputs.base-branch }}
+        SWARMFILE_COMMAND: ${{ inputs.command }}
+        SWARMFILE_PROMPT: ${{ inputs.prompt }}
+        SWARMFILE_CONTAINER_IMAGE: ${{ inputs.container-image }}
+        SWARMFILE_SETUP_COMMAND: ${{ inputs.setup-command }}
+        SWARMFILE_AGENT_ENV: ${{ inputs.agent-env }}
+        SWARMFILE_RUN_ON_HOST: ${{ inputs.run-on-host }}
+        SWARMFILE_LOCAL_CHECK_COMMAND: ${{ inputs.local-check-command }}
+        SWARMFILE_MANUAL_PUSH: ${{ inputs.manual-push }}
+        SWARMFILE_PUBLISH_BRANCH: ${{ inputs.branch }}
+        SWARMFILE_OPEN_PR: ${{ inputs.open-pr }}
+        SWARMFILE_PR_BASE: ${{ inputs.pr-base }}
+        SWARMFILE_PR_TITLE: ${{ inputs.pr-title }}
+        SWARMFILE_PR_BODY: ${{ inputs.pr-body }}
+        SWARMFILE_ISSUE_NUMBER: ${{ inputs.issue-number }}
+        SWARMFILE_GITHUB_TOKEN: ${{ inputs.github-token }}
+        SWARMFILE_EXPECTED_HEAD: ${{ inputs.expected-head }}
+        SWARMFILE_ALLOW_WORKFLOW_CHANGES: ${{ inputs.allow-workflow-changes }}
+        SWARMFILE_PROVENANCE: ${{ inputs.provenance }}
+      run: "bash \"${{ github.action_path }}/scripts/run.sh\""

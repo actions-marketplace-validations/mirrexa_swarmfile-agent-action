@@ -1,0 +1,13 @@
+# .swarmfile/agents.yml — repository-wide agent policy.
+max_concurrent: 20
+branch_prefix: agents
+ttl_days: 2
+checkpoint_idle_secs: 30
+conflict_mode: hard
+image: node:24-bookworm
+paths_deny:
+  - secrets/**
+local_checks: false
+upstream_push: session_end
+upstream_ci: pr_only
+merge_diff3: true

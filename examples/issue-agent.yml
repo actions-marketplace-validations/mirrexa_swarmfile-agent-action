@@ -1,0 +1,181 @@
+# Label an issue `swarmfile-agent` and two jobs run:
+#   1. agent   — no repository write token; checks out only the action (local
+#                copy, no persisted credentials), runs the agent in a container
+#                with only the Swarmfile workspace mounted, and promotes the
+#                branch.
+#   2. publish — a separate job with the repository token; fetches the branch,
+#                pushes it, and opens the PR.
+#
+# Copy this file to .github/workflows/issue-agent.yml. Until the action is
+# published under a GitHub org, copy the action itself to
+# .github/actions/swarmfile-agent and keep the local `uses:` below.
+name: Agent from issue
+
+# The action's upstream_ci is a hint for THIS repository's other workflows:
+# pr_only -> on: pull_request, on_push -> on: push, none -> neither. This
+# workflow itself is triggered by the issue label; it cannot change theirs.
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+
+# Coordinator MVP: one run per issue, and a re-label waits for the current
+# run rather than racing it. Remove the label after a successful publish so
+# the issue queue is one-shot.
+concurrency:
+  group: swarmfile-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  agent:
+    if: github.event.issue.state == 'open' && ((github.event_name == 'issues' && github.event.label.name == 'swarmfile-agent') || (github.event_name == 'issue_comment' && !github.event.issue.pull_request && startsWith(github.event.comment.body, '@swarmfile run')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      branch: ${{ steps.agent.outputs.branch }}
+      head: ${{ steps.agent.outputs.head }}
+    steps:
+      # A relabel while a run is in flight queues a second run. Its captured
+      # event still carries the label even after the first run removes it;
+      # this guard makes the queued duplicate fail before it starts.
+      - name: Ensure the issue is still queued
+        if: github.event_name == 'issues'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: |
+          labels="$(gh issue view "$ISSUE" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name')"
+          if ! grep -qx 'swarmfile-agent' <<< "$labels"; then
+            echo "swarmfile-agent label was already consumed; skipping this queued run" >&2
+            exit 1
+          fi
+      # Security boundary: anyone with the repository's `triage` role can
+      # apply a label, so require the labeler to be explicitly allowlisted in
+      # the SWARMFILE_TRUSTED_LABELERS repository variable (comma-separated
+      # GitHub logins). Set it before enabling this workflow; unset fails
+      # closed. For a stronger gate, also attach this job to a protected
+      # environment with required reviewers.
+      - name: Require a trusted labeler
+        env:
+          TRUSTED_LABELERS: ${{ vars.SWARMFILE_TRUSTED_LABELERS }}
+          LABELER: ${{ github.event.sender.login }}
+        run: |
+          allowed=false
+          IFS=',' read -ra ALLOWED <<< "${TRUSTED_LABELERS}"
+          for entry in "${ALLOWED[@]}"; do
+            entry="${entry#"${entry%%[![:space:]]*}"}"
+            entry="${entry%"${entry##*[![:space:]]}"}"
+            if [ "$entry" = "$LABELER" ]; then allowed=true; fi
+          done
+          if [ "$allowed" != true ]; then
+            echo "Labeler ${LABELER} is not in SWARMFILE_TRUSTED_LABELERS" >&2
+            exit 1
+          fi
+      # The local composite action needs its files. Once the action is
+      # published, remove this checkout, use swarmfile/agent-action@v1, and
+      # set permissions: {} here.
+      - name: Check out only the local action
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/actions/swarmfile-agent
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Run the agent in a Swarmfile workspace
+        id: agent
+        uses: ./.github/actions/swarmfile-agent
+        with:
+          mode: agent
+          org: org_REPLACE_ME
+          repository: proj_REPLACE_ME
+          api-key: ${{ secrets.SWARMFILE_API_KEY }}
+          label: issue-${{ github.event.issue.number }}
+          base-branch: main
+          issue-number: ${{ github.event.issue.number }}
+          container-image: node:24-bookworm
+          agent-env: ANTHROPIC_API_KEY
+          prompt: |
+            You are working on issue #${{ github.event.issue.number }}:
+            ${{ github.event.issue.title }}
+
+            ${{ github.event.issue.body }}
+
+            ${{ github.event_name == 'issue_comment' && format('Comment trigger: {0}', github.event.comment.body) || '' }}
+
+            Make the smallest correct change, run the relevant checks, and
+            leave the result in the workspace. The action commits and pushes it.
+          # Pin the harness version and add its non-interactive flags in CI.
+          # Replace the version deliberately; never use @latest in production.
+          command: npx -y @anthropic-ai/claude-code@2.1.310 -p "$SWARMFILE_PROMPT"
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+  publish:
+    needs: agent
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      checks: write
+      statuses: write
+    steps:
+      - name: Check out the base branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Publish the agent branch and open a PR
+        id: publish
+        uses: ./.github/actions/swarmfile-agent
+        with:
+          mode: publish
+          org: org_REPLACE_ME
+          repository: proj_REPLACE_ME
+          api-key: ${{ secrets.SWARMFILE_API_KEY }}
+          github-token: ${{ github.token }}
+          expected-head: ${{ needs.agent.outputs.head }}
+          branch: ${{ needs.agent.outputs.branch }}
+          label: issue-${{ github.event.issue.number }}
+          base-branch: main
+          issue-number: ${{ github.event.issue.number }}
+          open-pr: "true"
+          pr-base: main
+          pr-title: "Agent: ${{ github.event.issue.title }}"
+          pr-body: |
+            This pull request was produced by an agent in a Swarmfile workspace.
+
+            Session: `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`
+
+      - name: Comment the pull request and run on the issue
+        if: always() && steps.publish.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ steps.publish.outputs.pr-url }}
+          ISSUE: ${{ github.event.issue.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          body="Agent run: $RUN_URL"
+          if [ -n "$PR_URL" ]; then
+            body="Agent pull request: $PR_URL
+
+          $body"
+          fi
+          gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body "$body"
+          # The queue is one-shot: a no-change success also removes the label,
+          # so the issue is not visibly stuck. A failed publish leaves it for
+          # a deliberate retry.
+          # Remove the queue label for a label-triggered run, and for a
+          # comment-triggered run when the label is still present (so a queued
+          # label run's start guard does not execute a duplicate).
+          if [ "$EVENT_NAME" = "issues" ] || gh issue view "$ISSUE" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name' | grep -qx swarmfile-agent; then
+            gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" --remove-label swarmfile-agent
+          fi
