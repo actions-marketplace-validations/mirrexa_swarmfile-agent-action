@@ -465,10 +465,16 @@ if [ "$committed" = "true" ]; then
     cat "$WORK/confirm.json" >&2 || true
     fail "the confirmation mount has no id"
   fi
-  if ! sf --mount "$CONFIRM_ID" git index >"$WORK/git-index.log" 2>&1; then
-    cat "$WORK/git-index.log" >&2 || true
+  if ! git_index_json="$(sf --mount "$CONFIRM_ID" git index --json 2>"$WORK/git-index.err")"; then
+    cat "$WORK/git-index.err" >&2 || true
+    [ -n "${git_index_json:-}" ] && printf '%s\n' "$git_index_json" >&2
     fail "git index could not confirm the agent commit"
   fi
+  printf '%s' "$git_index_json" > "$WORK/git-index.json"
+  # The index response is the authoritative head: the branch row can lag it
+  # by a tick, and the publish job fetches the final head.
+  index_head="$(printf '%s' "$git_index_json" \
+    | jq -r '(.outcomes // []) | map(select(.derivedHash != null)) | last | .derivedHash // empty' 2>/dev/null || true)"
   sf mounts close "$CONFIRM_ID" >/dev/null 2>&1 || true
 fi
 
@@ -496,6 +502,12 @@ if [ -z "$head" ]; then
   head="$(sf --json branch list --all 2>/dev/null \
     | jq -r --arg b "$head_branch" '(.branches // .)[] | select(.name == $b) | (.headCommitHash // .head_commit_hash // empty)' 2>/dev/null \
     | head -1)"
+fi
+# Prefer the hash the index actually confirmed; the branch row read above is
+# a fallback for a no-change run (and for an already-confirmed head, where the
+# index returns no new outcome).
+if [ -n "${index_head:-}" ]; then
+  head="$index_head"
 fi
 if [ "$no_changes" != "true" ] && [ -z "$head" ]; then
   fail "the agent commit is not confirmed on $published_branch (headCommitHash is null); refusing to publish"
