@@ -9,17 +9,18 @@ This is the GitHub-native half of Swarmfile's agent story. GitHub stays the code
 host and the review surface; Swarmfile supplies the safe, mounted workspace
 behind the agent.
 
-> **Status:** first slice. Linux x86_64 runners only; container mode needs Docker.
-> `run-on-host` is an explicit non-isolating fallback for FUSE-host runners where
-> Docker cannot bind the mount (see the input and security notes below).
-> and a FUSE-capable runner (the publish job needs neither). FUSE on
-> GitHub-hosted `ubuntu-latest` is being validated; use a self-hosted runner if
-> it fails. The action needs a release that includes the agent-workspace
-> commands (**0.3.15+**); the stable channel can lag, so set `deb-url` to a newer
-> `.deb` if the installer refuses. It is not yet published to the GitHub
-> Prerequisites: `curl`, `jq`, `git`, and `gh` (the publish PR/provenance path).
-> Marketplace; copy it into a repository or use the source from the
-> `swarmfile-agent-action` public repository once it is released.
+> **Status:** first slice. Linux x86_64 runners only; the agent job needs
+> Docker (container mode) and a FUSE-capable runner (the publish job needs
+> neither). `run-on-host` is an explicit non-isolating fallback for FUSE-host
+> runners where Docker cannot bind the mount (see the input and security notes
+> below). FUSE on GitHub-hosted `ubuntu-latest` is being validated; use a
+> self-hosted runner if it fails. The action needs a release that includes the
+> agent-workspace commands (**0.3.15+**); the stable channel can lag, so set
+> `deb-url` to a newer `.deb` if the installer refuses. Published at
+> <https://github.com/marketplace/actions/swarmfile-agent-workspace>; use
+> `mirrexa/swarmfile-agent-action@v0.3.16` (or the source) with the public
+> action ref. Prerequisites: `curl`, `jq`, `git`, and `gh` (the publish
+> PR/provenance path).
 
 ## Security model
 
