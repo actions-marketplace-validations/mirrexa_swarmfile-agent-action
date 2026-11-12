@@ -15,7 +15,7 @@ behind the agent.
 > and a FUSE-capable runner (the publish job needs neither). FUSE on
 > GitHub-hosted `ubuntu-latest` is being validated; use a self-hosted runner if
 > it fails. The action needs a release that includes the agent-workspace
-> commands (**0.3.13+**); the stable channel can lag, so set `deb-url` to a newer
+> commands (**0.3.15+**); the stable channel can lag, so set `deb-url` to a newer
 > `.deb` if the installer refuses. It is not yet published to the GitHub
 > Prerequisites: `curl`, `jq`, `git`, and `gh` (the publish PR/provenance path).
 > Marketplace; copy it into a repository or use the source from the
@@ -152,7 +152,8 @@ the issue.
 |---|---|---|---|---|
 | `mode` | both | no | `agent` | `agent` or `publish` |
 | `org` | both | yes | — | Swarmfile organization id |
-| `repository` | both | yes | — | Swarmfile repository id |
+| `repository` | both | yes (or `project`) | — | Swarmfile repository id |
+| `project` | both | deprecated | — | alias for `repository`, kept for pre-rename workflows |
 | `api-key` | both | yes | — | repository-scoped key; use a secret |
 | `hub-url` | both | no | `https://hub.swarmfile.com` | hub or community-server URL; the signed manifest fetch requires HTTPS/loopback and is hosted-hub only |
 | `git-insecure-hosts` | both | no | empty | plain-HTTP hosts accepted by the git helper (never the manifest/API key fetch) |
@@ -275,7 +276,7 @@ fails closed rather than silently using defaults.
   override is a later feature.
 - The engine `.deb` is the update-channel build. A release that predates agent
   sessions/checkpoints is refused; the stable channel was 0.3.12 at the time of
-  writing, so a 0.3.13+ `deb-url` is required until the next release is
+  writing, so a 0.3.15+ `deb-url` is required until the next release is
   promoted.
 
 ## Development

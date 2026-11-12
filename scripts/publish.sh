@@ -229,11 +229,18 @@ if [ "${count:-0}" -gt 0 ]; then
     fail "the fetched head (git $github_head, subject \"${fetched_subject:-<none>}\", trailer \"${fetched_trailer:-<none>}\") does not carry the agent job's Swarmfile commit ($EXPECTED_HEAD); parent trailer is \"${parent_trailer:-<none>}\""
   fi
 elif [ -n "$EXPECTED_HEAD" ]; then
-  base_head="$(git -C "$GITHUB_WORKSPACE" rev-parse "origin/$BASE")" \
-    || fail "could not read origin/$BASE"
+  # A no-change run's expected head is the BASE BRANCH'S SWARMFILE head, not
+  # the GitHub base SHA (the agent reports the former; the git commit is the
+  # latter, so comparing them could never match). Read the hub head instead.
+  base_head="$(printf 'header = "Authorization: Bearer %s"\n' "$SWARMFILE_API_KEY" \
+    | curl -fsS -K - "${HUB%/}/orgs/$ORG/repositories/$PROJECT/branches" 2>/dev/null \
+    | jq -r --arg b "$BASE" '(.branches // .)[] | select(.name == $b) | (.headCommitHash // .head_commit_hash // empty)' 2>/dev/null \
+    | head -1)"
+  [ -n "$base_head" ] \
+    || fail "could not read the base branch's canonical commit from the hub"
   [ "$EXPECTED_HEAD" = "$base_head" ] \
-    || fail "the branch has no commits over origin/$BASE but expected-head ($EXPECTED_HEAD) is not the base; the agent commit is missing"
-  say "the branch has no commits over origin/$BASE; expected-head matches the base"
+    || fail "the branch has no commits over origin/$BASE but expected-head ($EXPECTED_HEAD) is not the base's canonical commit ($base_head); the agent commit is missing"
+  say "the branch has no commits over origin/$BASE; expected-head matches the base's canonical commit"
 fi
 
 # `-z` + `core.quotePath=false` + `--no-renames` is the gate's contract:

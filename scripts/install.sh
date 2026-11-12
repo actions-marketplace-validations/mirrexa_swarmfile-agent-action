@@ -44,6 +44,8 @@ require_agent_features() {
     || fail "this release predates agent sessions; set deb-url to a 0.3.13+ .deb"
   "$cli" checkpoint --help >/dev/null 2>&1 \
     || fail "this release predates checkpoints; set deb-url to a 0.3.13+ .deb"
+  "$cli" git index --help 2>&1 | grep -c -- '--json' >/dev/null \
+    || fail "this release predates the canonical-head binding; set deb-url to a 0.3.15+ .deb"
 }
 
 case "$(uname -s)" in

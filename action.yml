@@ -15,8 +15,11 @@ inputs:
     description: Swarmfile organization id.
     required: true
   repository:
-    description: Swarmfile repository id (from `swarmfile repository list --json`).
-    required: true
+    description: Swarmfile repository id (from `swarmfile repository list --json`). The deprecated `project` input is accepted as an alias.
+    required: false
+  project:
+    description: Deprecated alias for `repository`, kept for workflows written before the repository rename. Prefer `repository`.
+    required: false
   api-key:
     description: Repository-scoped Swarmfile API key (`sf_key_…`). Use a secret.
     required: true
@@ -146,6 +149,24 @@ outputs:
 runs:
   using: composite
   steps:
+    # `repository` and the deprecated `project` alias cannot both be marked
+    # required, and GitHub does not enforce an action input's `required` flag.
+    # Fail before installing tooling when neither is set.
+    - id: require-repository
+      shell: bash
+      env:
+        SWARMFILE_REPOSITORY_ID: ${{ inputs.repository || inputs.project }}
+        INPUT_REPOSITORY: ${{ inputs.repository }}
+        INPUT_PROJECT: ${{ inputs.project }}
+      run: |
+        if [ -z "$SWARMFILE_REPOSITORY_ID" ]; then
+          echo "::error::The 'repository' input is required (or the deprecated 'project' alias)."
+          exit 1
+        fi
+        if [ -n "$INPUT_PROJECT" ] && [ -z "$INPUT_REPOSITORY" ]; then
+          echo "::warning::The 'project' input is deprecated; rename it to 'repository'. The alias keeps working for now."
+        fi
+
     - id: install
       shell: bash
       env:
@@ -161,7 +182,7 @@ runs:
       env:
         SWARMFILE_MODE: ${{ inputs.mode }}
         SWARMFILE_ORG_ID: ${{ inputs.org }}
-        SWARMFILE_REPOSITORY_ID: ${{ inputs.repository }}
+        SWARMFILE_REPOSITORY_ID: ${{ inputs.repository || inputs.project }}
         SWARMFILE_API_KEY: ${{ inputs.api-key }}
         SWARMFILE_HUB_URL: ${{ inputs.hub-url }}
         SWARMFILE_GIT_INSECURE_HOSTS: ${{ inputs.git-insecure-hosts }}

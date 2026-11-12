@@ -91,7 +91,7 @@ jobs:
         with:
           mode: agent
           org: org_REPLACE_ME
-          repository: proj_REPLACE_ME
+          repository: repo_REPLACE_ME
           api-key: ${{ secrets.SWARMFILE_API_KEY }}
           label: issue-${{ github.event.issue.number }}
           base-branch: main
@@ -138,7 +138,7 @@ jobs:
         with:
           mode: publish
           org: org_REPLACE_ME
-          repository: proj_REPLACE_ME
+          repository: repo_REPLACE_ME
           api-key: ${{ secrets.SWARMFILE_API_KEY }}
           github-token: ${{ github.token }}
           expected-head: ${{ needs.agent.outputs.head }}

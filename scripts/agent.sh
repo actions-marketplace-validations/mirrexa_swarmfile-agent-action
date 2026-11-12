@@ -473,8 +473,12 @@ if [ "$committed" = "true" ]; then
   printf '%s' "$git_index_json" > "$WORK/git-index.json"
   # The index response is the authoritative head: the branch row can lag it
   # by a tick, and the publish job fetches the final head.
+  # Select the outcome for the branch's HEAD seq, not the last derived
+  # ancestor: a confirmed head may sit on a provisional parent, and "last"
+  # would then hand the publish job the ancestor's hash.
+  index_seq="$(printf '%s' "$git_index_json" | jq -r '.seq // empty' 2>/dev/null || true)"
   index_head="$(printf '%s' "$git_index_json" \
-    | jq -r '(.outcomes // []) | map(select(.derivedHash != null)) | last | .derivedHash // empty' 2>/dev/null || true)"
+    | jq -r --arg seq "${index_seq:-}" '(.outcomes // []) | map(select((.seq|tostring) == $seq and .derivedHash != null)) | last | .derivedHash // empty' 2>/dev/null || true)"
   sf mounts close "$CONFIRM_ID" >/dev/null 2>&1 || true
 fi
 
@@ -485,29 +489,27 @@ fi
 # cache). The repository key is the same credential the engine used; the header
 # stays out of argv via curl's stdin config.
 head=""
-head_branch="$published_branch"
-[ "$no_changes" = "true" ] && head_branch="$BASE"
-HEAD_TRIES="${SWARMFILE_HEAD_TRIES:-30}"
-HEAD_SLEEP_SECS="${SWARMFILE_HEAD_SLEEP_SECS:-1}"
-for _ in $(seq 1 "$HEAD_TRIES"); do
-  head="$(printf 'header = "Authorization: Bearer %s"\n' "$SWARMFILE_API_KEY" \
-    | curl -fsS -K - "${HUB%/}/orgs/$ORG/repositories/$PROJECT/branches" 2>/dev/null \
-    | jq -r --arg b "$head_branch" '(.branches // .)[] | select(.name == $b) | (.headCommitHash // .head_commit_hash // empty)' 2>/dev/null \
-    | head -1)"
-  [ -n "$head" ] && break
-  sleep "$HEAD_SLEEP_SECS"
-done
-# The engine's branch list is a second view when the direct read is blocked.
-if [ -z "$head" ]; then
-  head="$(sf --json branch list --all 2>/dev/null \
-    | jq -r --arg b "$head_branch" '(.branches // .)[] | select(.name == $b) | (.headCommitHash // .head_commit_hash // empty)' 2>/dev/null \
-    | head -1)"
-fi
-# Prefer the hash the index actually confirmed; the branch row read above is
-# a fallback for a no-change run (and for an already-confirmed head, where the
-# index returns no new outcome).
 if [ -n "${index_head:-}" ]; then
   head="$index_head"
+else
+  head_branch="$published_branch"
+  [ "$no_changes" = "true" ] && head_branch="$BASE"
+  HEAD_TRIES="${SWARMFILE_HEAD_TRIES:-30}"
+  HEAD_SLEEP_SECS="${SWARMFILE_HEAD_SLEEP_SECS:-1}"
+  for _ in $(seq 1 "$HEAD_TRIES"); do
+    head="$(printf 'header = "Authorization: Bearer %s"\n' "$SWARMFILE_API_KEY" \
+      | curl -fsS -K - "${HUB%/}/orgs/$ORG/repositories/$PROJECT/branches" 2>/dev/null \
+      | jq -r --arg b "$head_branch" '(.branches // .)[] | select(.name == $b) | (.headCommitHash // .head_commit_hash // empty)' 2>/dev/null \
+      | head -1)"
+    [ -n "$head" ] && break
+    sleep "$HEAD_SLEEP_SECS"
+  done
+  # The engine's branch list is a second view when the direct read is blocked.
+  if [ -z "$head" ]; then
+    head="$(sf --json branch list --all 2>/dev/null \
+      | jq -r --arg b "$head_branch" '(.branches // .)[] | select(.name == $b) | (.headCommitHash // .head_commit_hash // empty)' 2>/dev/null \
+      | head -1)"
+  fi
 fi
 if [ "$no_changes" != "true" ] && [ -z "$head" ]; then
   fail "the agent commit is not confirmed on $published_branch (headCommitHash is null); refusing to publish"
